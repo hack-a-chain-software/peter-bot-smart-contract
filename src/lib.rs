@@ -1,5 +1,4 @@
 use near_sdk::{ borsh };
-use serde_json::Value; 
 use borsh::{ BorshDeserialize, BorshSerialize };
 use near_sdk::{
     env, near_bindgen, AccountId, Promise,
@@ -7,7 +6,7 @@ use near_sdk::{
     json_types::{ U128 },
     utils::assert_one_yocto, ext_contract
 };
-pub use near_sdk::serde_json::{json};
+pub use near_sdk::serde_json::{self, json, Value};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc = near_sdk::wee_alloc::WeeAlloc::INIT;
@@ -24,8 +23,8 @@ trait FungibleToken {
 
 #[ext_contract(ext_self)]
 trait LogInfo {
-    fn log_transfer(receiver: String, full_amount: U128, transfered_amount: U128,
-        fee_amount: U128, burn_amount:U128, token: AccountId, sender: AccountId);
+    fn log_transfer(receiver: String, burner: String, full_amount: U128, transfered_amount: U128,
+        fee_amount: U128, burn_amount: U128, token: AccountId, sender: AccountId);
 }
 
 #[near_bindgen]
@@ -63,9 +62,9 @@ impl PeterBot {
         let receiver_amount = ( amount * (FRACTIONAL_BASE - self.transfer_fee) ) / FRACTIONAL_BASE;
         let fee_amount = amount - receiver_amount;
 
-        Promise::new(receiver).transfer(receiver_amount).then(
-            ext_self::log_transfer(receiver, None, amount, U128(receiver_amount),
-                U128(fee_amount), None, "$NEAR".to_string(), sender_id,
+        Promise::new(receiver.clone()).transfer(receiver_amount).then(
+            ext_self::log_transfer(receiver, "null".to_string(), U128(amount), U128(receiver_amount),
+                U128(fee_amount), U128(0), "$NEAR".to_string(), sender_id,
                 &env::current_account_id(), 0, BASE_GAS)
         )
     }
@@ -80,22 +79,22 @@ impl PeterBot {
         let burner = parsed_message["burner"].as_str().unwrap();
 
 
-        token_contract::ft_transfer(receiver.clone(), U128(receiver_amount), "memo".to_string(), 
+        token_contract::ft_transfer(receiver.to_string(), U128(receiver_amount), "memo".to_string(), 
                             &env::predecessor_account_id(), 1, BASE_GAS
         ).then(
-            token_contract::ft_transfer(burner.clone(), U128(burn_amount), "memo".to_string(), 
+            token_contract::ft_transfer(burner.to_string(), U128(burn_amount), "memo".to_string(), 
                             &env::predecessor_account_id(), 1, BASE_GAS)
         ).then(
-            ext_self::log_transfer(receiver, Some(burner), amount, U128(receiver_amount),
-                U128(fee_amount), Some(U128(burn_amount)), env::predecessor_account_id(), sender_id,
+            ext_self::log_transfer(receiver.to_string(), burner.to_string(), amount, U128(receiver_amount),
+                U128(fee_amount), U128(burn_amount), env::predecessor_account_id(), sender_id,
                 &env::current_account_id(), 0, BASE_GAS)
         );
         "0".to_string()
     }
 
     #[private]
-    pub fn log_transfer(receiver: String, burner: Option<String>, full_amount: U128, transfered_amount: U128,
-        fee_amount: U128, burn_amount: Option<U128>, token: AccountId, sender: AccountId) {
+    pub fn log_transfer(receiver: String, burner: String, full_amount: U128, transfered_amount: U128,
+        fee_amount: U128, burn_amount: U128, token: AccountId, sender: AccountId) {
 
             assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
             match env::promise_result(0) {
@@ -108,13 +107,12 @@ impl PeterBot {
                         "data": {
                             "sender": sender,
                             "receiver": receiver,
-                            "burner": burner.unwrap_or("null"),
+                            "burner": burner,
                             "token": token,
                             "full_amount": full_amount,
                             "transfered_amount": transfered_amount,
                             "fee_amount": fee_amount,
-                            "burn_amount": burn_amount.unwrap_or("null"),
-
+                            "burn_amount": burn_amount,
                         }
                     }).to_string());
                 },
