@@ -1,4 +1,5 @@
 use near_sdk::{ borsh };
+use serde_json::Value; 
 use borsh::{ BorshDeserialize, BorshSerialize };
 use near_sdk::{
     env, near_bindgen, AccountId, Promise,
@@ -56,9 +57,17 @@ impl PeterBot {
 
     #[payable]
     pub fn transfer_payment(&mut self, receiver: AccountId) -> Promise {
-        let deposit = env::attached_deposit();
-        let receiver_amount = ( deposit * (FRACTIONAL_BASE - self.transfer_fee) ) / FRACTIONAL_BASE;
-        Promise::new(receiver).transfer(receiver_amount)
+
+        let sender_id = env::predecessor_account_id();
+        let amount = env::attached_deposit();
+        let receiver_amount = ( amount * (FRACTIONAL_BASE - self.transfer_fee) ) / FRACTIONAL_BASE;
+        let fee_amount = amount - receiver_amount;
+
+        Promise::new(receiver).transfer(receiver_amount).then(
+            ext_self::log_transfer(receiver, None, amount, U128(receiver_amount),
+                U128(fee_amount), None, "$NEAR".to_string(), sender_id,
+                &env::current_account_id(), 0, BASE_GAS)
+        )
     }
 
     pub fn ft_on_transfer(&mut self, sender_id: String, amount: U128, msg: String) -> String {
@@ -66,23 +75,27 @@ impl PeterBot {
         let receiver_amount = ( amount.0 * (FRACTIONAL_BASE - (self.transfer_fee * 2) ) ) / FRACTIONAL_BASE;
         let burn_amount = ( amount.0 * (self.transfer_fee) ) / FRACTIONAL_BASE;
         let fee_amount = amount.0 - receiver_amount - burn_amount;
-        let receiver = msg;
+        let parsed_message: Value = serde_json::from_str(&msg).unwrap();
+        let receiver = parsed_message["receiver"].as_str().unwrap();
+        let burner = parsed_message["burner"].as_str().unwrap();
+
+
         token_contract::ft_transfer(receiver.clone(), U128(receiver_amount), "memo".to_string(), 
                             &env::predecessor_account_id(), 1, BASE_GAS
         ).then(
-            token_contract::ft_transfer(env::predecessor_account_id(), U128(burn_amount), "memo".to_string(), 
+            token_contract::ft_transfer(burner.clone(), U128(burn_amount), "memo".to_string(), 
                             &env::predecessor_account_id(), 1, BASE_GAS)
         ).then(
-            ext_self::log_transfer(receiver, amount, U128(receiver_amount),
-                U128(fee_amount), U128(burn_amount), env::predecessor_account_id(), sender_id,
+            ext_self::log_transfer(receiver, Some(burner), amount, U128(receiver_amount),
+                U128(fee_amount), Some(U128(burn_amount)), env::predecessor_account_id(), sender_id,
                 &env::current_account_id(), 0, BASE_GAS)
         );
         "0".to_string()
     }
 
     #[private]
-    pub fn log_transfer(receiver: String, full_amount: U128, transfered_amount: U128,
-        fee_amount: U128, burn_amount:U128, token: AccountId, sender: AccountId) {
+    pub fn log_transfer(receiver: String, burner: Option<String>, full_amount: U128, transfered_amount: U128,
+        fee_amount: U128, burn_amount: Option<U128>, token: AccountId, sender: AccountId) {
 
             assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
             match env::promise_result(0) {
@@ -95,11 +108,13 @@ impl PeterBot {
                         "data": {
                             "sender": sender,
                             "receiver": receiver,
+                            "burner": burner.unwrap_or("null"),
                             "token": token,
                             "full_amount": full_amount,
                             "transfered_amount": transfered_amount,
                             "fee_amount": fee_amount,
-                            "burn_amount": burn_amount,
+                            "burn_amount": burn_amount.unwrap_or("null"),
+
                         }
                     }).to_string());
                 },
