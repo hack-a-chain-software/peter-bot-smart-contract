@@ -74,9 +74,9 @@ impl PeterBot {
         let receiver_amount = ( amount.0 * (FRACTIONAL_BASE - (self.transfer_fee * 2) ) ) / FRACTIONAL_BASE;
         let burn_amount = ( amount.0 * (self.transfer_fee) ) / FRACTIONAL_BASE;
         let fee_amount = amount.0 - receiver_amount - burn_amount;
-        let parsed_message: Value = serde_json::from_str(&msg).unwrap();
-        let receiver = parsed_message["receiver"].as_str().unwrap();
-        let burner = parsed_message["burner"].as_str().unwrap();
+        let parsed_message: Value = serde_json::from_str(&msg).expect("1");
+        let receiver = parsed_message["receiver"].as_str().expect("2");
+        let burner = parsed_message["burner"].as_str().expect("3");
 
 
         token_contract::ft_transfer(receiver.to_string(), U128(receiver_amount), "memo".to_string(), 
