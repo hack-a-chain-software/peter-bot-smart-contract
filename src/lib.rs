@@ -28,22 +28,20 @@ trait LogInfo {
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct TippingBot {
-    
+pub struct Contract {
     pub owner_id: AccountId,
-
 }
 
-impl Default for TippingBot {
+impl Default for Contract {
     fn default() -> Self {
         panic!("Should be initialized before usage")
     }
 }
 
 #[near_bindgen]
-impl TippingBot {
+impl Contract {
     #[init]
-    pub fn new(owner_id: AccountId, transfer_fee: U128) -> Self {
+    pub fn new(owner_id: AccountId) -> Self {
         assert!(env::is_valid_account_id(owner_id.as_bytes()), "Invalid owner account");
         assert!(!env::state_exists(), "Already initialized");
         
@@ -64,14 +62,13 @@ impl TippingBot {
         )
     }
 
-    //receiver: String , amount: U128, token: AccountId, sender: AccountId
 
     pub fn ft_on_transfer(&mut self, sender_id: String, amount: U128, msg: String) -> String {
     
         let parsed_message: Value = serde_json::from_str(&msg).expect("No message was parsed");
         let receiver = parsed_message["receiver"].as_str().expect("No receiver was parsed on the message");
 
-        token_contract::ft_transfer(receiver.to_string(), U128(amount.clone()), "memo".to_string(), 
+        token_contract::ft_transfer(receiver.to_string(), amount.clone(), "memo".to_string(), 
                             &env::predecessor_account_id(), 1, BASE_GAS
         ).then(
             ext_self::log_transfer(receiver.to_string(), amount,env::predecessor_account_id(),
@@ -122,7 +119,6 @@ mod tests {
     pub const SIGNER_ACCOUNT: &str = "signer.testnet";
     pub const OWNER_ACCOUNT: &str = "owner.testnet";
 
-    // mock the context for testing, notice "signer_account_id" that was accessed above from env::
   pub fn get_context(input: Vec<u8>, is_view: bool, attached_deposit: u128, account_balance: u128, signer_id: AccountId) -> VMContext {
     VMContext {
         current_account_id: CONTRACT_ACCOUNT.to_string(),
@@ -144,67 +140,32 @@ mod tests {
     }
   }
 
-  pub fn get_test_meta() -> FungibleTokenMetadata{
-    FungibleTokenMetadata {
-        spec: FT_METADATA_SPEC.to_string(),
-        name: "Example NEAR fungible token".to_string(),
-        symbol: "EXAMPLE".to_string(),
-        icon: Some(DATA_IMAGE_SVG_NEAR_ICON.to_string()),
-        reference: None,
-        reference_hash: None,
-        decimals: 24,
-    }
-      
-  }
 
   pub fn init_contract() -> Contract{
     Contract {
-        token: FungibleToken::new(b"a".to_vec()),
-        metadata: LazyOption::new(b"m".to_vec(), Some(&get_test_meta()))
+        owner_id: OWNER_ACCOUNT.to_string(),
     }
   }
 
 
     #[test]
     fn test_new() {
-        let mut context = get_context(vec!(), false, 0, 0, OWNER_ACCOUNT.to_string()); // vec!() -> da pra inicializar assim, tem otimizacao ( macro vec)
+        let mut context = get_context(vec!(), false, 0, 0, OWNER_ACCOUNT.to_string()); 
     
         testing_env!(context);
-        let contract = Contract::new(OWNER_ACCOUNT.to_string(), TOTAL_SUPPLY.into(), get_test_meta());
-        let contract_metadata = contract.metadata.get().unwrap();
-         
-        assert_eq!(contract.ft_total_supply().0, TOTAL_SUPPLY);
-        assert_eq!(contract.ft_balance_of( ValidAccountId::try_from(OWNER_ACCOUNT).unwrap() ).0, TOTAL_SUPPLY);
-        assert_eq!(contract_metadata.spec, get_test_meta().spec)
+
+        let contract = Contract::new(OWNER_ACCOUNT.to_string());
+        assert_eq!(contract.owner_id, OWNER_ACCOUNT.to_string())
     }
 
     #[test]
-    #[should_panic(expected = "The contract is not initialized")]
+    #[should_panic(expected = "Should be initialized before usage")]
     fn test_default() {
         let mut context = get_context(vec!(), false, 0, 0, OWNER_ACCOUNT.to_string()); 
         testing_env!(context);
         let _contract = Contract::default();
     }
 
-    #[test]
-    fn test_transfer() {
-        let mut context = get_context(vec!(), false, 1, 0, SIGNER_ACCOUNT.to_string());
-        testing_env!(context);
-
-        let mut contract = init_contract();
-
-        //registring owner 
-        contract.token.internal_register_account(&OWNER_ACCOUNT.to_string());
-        contract.token.internal_register_account(&SIGNER_ACCOUNT.to_string());
-        contract.token.internal_deposit(&SIGNER_ACCOUNT.to_string(), TOTAL_SUPPLY);      
-        
-        let transfer_amount = 10;
-
-        contract.ft_transfer(ValidAccountId::try_from(OWNER_ACCOUNT).unwrap(), U128(transfer_amount),None );
-
-        assert_eq!(contract.ft_balance_of(ValidAccountId::try_from(SIGNER_ACCOUNT).unwrap()).0, (TOTAL_SUPPLY - transfer_amount));
-        assert_eq!(contract.ft_balance_of(ValidAccountId::try_from(OWNER_ACCOUNT).unwrap()).0, transfer_amount);
-    }
 
 
 }
