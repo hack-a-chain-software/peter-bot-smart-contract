@@ -23,34 +23,30 @@ trait FungibleToken {
 
 #[ext_contract(ext_self)]
 trait LogInfo {
-    fn log_transfer(receiver: String, burner: String, full_amount: U128, transfered_amount: U128,
-        fee_amount: U128, burn_amount: U128, token: AccountId, sender: AccountId);
+    fn log_transfer(receiver: String , amount: U128, token: AccountId, sender: AccountId);
 }
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct PeterBot {
-    
+pub struct Contract {
     pub owner_id: AccountId,
-    pub transfer_fee: u128 // X / 10000
-
 }
 
-impl Default for PeterBot {
+impl Default for Contract {
     fn default() -> Self {
         panic!("Should be initialized before usage")
     }
 }
 
 #[near_bindgen]
-impl PeterBot {
+impl Contract {
     #[init]
-    pub fn new(owner_id: AccountId, transfer_fee: U128) -> Self {
+    pub fn new(owner_id: AccountId) -> Self {
         assert!(env::is_valid_account_id(owner_id.as_bytes()), "Invalid owner account");
         assert!(!env::state_exists(), "Already initialized");
+        
         Self {
             owner_id: owner_id,
-            transfer_fee: transfer_fee.0
         }
     }
 
@@ -59,85 +55,118 @@ impl PeterBot {
 
         let sender_id = env::predecessor_account_id();
         let amount = env::attached_deposit();
-        let receiver_amount = ( amount * (FRACTIONAL_BASE - self.transfer_fee) ) / FRACTIONAL_BASE;
-        let fee_amount = amount - receiver_amount;
-
-        Promise::new(receiver.clone()).transfer(receiver_amount).then(
-            ext_self::log_transfer(receiver, "null".to_string(), U128(amount), U128(receiver_amount),
-                U128(fee_amount), U128(0), "$NEAR".to_string(), sender_id,
+    
+        Promise::new(receiver.clone()).transfer(amount).then(
+            ext_self::log_transfer(receiver, U128(amount),"$NEAR".to_string(), sender_id,
                 &env::current_account_id(), 0, BASE_GAS)
         )
     }
 
+
     pub fn ft_on_transfer(&mut self, sender_id: String, amount: U128, msg: String) -> String {
-               
-        let receiver_amount = ( amount.0 * (FRACTIONAL_BASE - (self.transfer_fee * 2) ) ) / FRACTIONAL_BASE;
-        let burn_amount = ( amount.0 * (self.transfer_fee) ) / FRACTIONAL_BASE;
-        let fee_amount = amount.0 - receiver_amount - burn_amount;
-        let parsed_message: Value = serde_json::from_str(&msg).expect("1");
-        let receiver = parsed_message["receiver"].as_str().expect("2");
-        let burner = parsed_message["burner"].as_str().expect("3");
+    
+        let parsed_message: Value = serde_json::from_str(&msg).expect("No message was parsed");
+        let receiver = parsed_message["receiver"].as_str().expect("No receiver was parsed on the message");
 
-
-        token_contract::ft_transfer(receiver.to_string(), U128(receiver_amount), "memo".to_string(), 
+        token_contract::ft_transfer(receiver.to_string(), amount.clone(), "memo".to_string(), 
                             &env::predecessor_account_id(), 1, BASE_GAS
         ).then(
-            token_contract::ft_transfer(burner.to_string(), U128(burn_amount), "memo".to_string(), 
-                            &env::predecessor_account_id(), 1, BASE_GAS)
-        ).then(
-            ext_self::log_transfer(receiver.to_string(), burner.to_string(), amount, U128(receiver_amount),
-                U128(fee_amount), U128(burn_amount), env::predecessor_account_id(), sender_id,
+            ext_self::log_transfer(receiver.to_string(), amount,env::predecessor_account_id(),
+            sender_id,
                 &env::current_account_id(), 0, BASE_GAS)
         );
         "0".to_string()
     }
 
     #[private]
-    pub fn log_transfer(receiver: String, burner: String, full_amount: U128, transfered_amount: U128,
-        fee_amount: U128, burn_amount: U128, token: AccountId, sender: AccountId) {
+    pub fn log_transfer(receiver: String , amount: U128, token: AccountId, sender: AccountId) {
 
             assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
             match env::promise_result(0) {
                 PromiseResult::NotReady => unreachable!(),
                 PromiseResult::Successful(_val) => {
                     log!("{}", &json!({
-                        "standard": "Peter-the-wire-bot",
+                        "standard": "The-Supah-Tipping-bot",
                         "version": "1.0.0",
                         "event": "transfer",
                         "data": {
                             "sender": sender,
                             "receiver": receiver,
-                            "burner": burner,
                             "token": token,
-                            "full_amount": full_amount,
-                            "transfered_amount": transfered_amount,
-                            "fee_amount": fee_amount,
-                            "burn_amount": burn_amount,
+                            "amount":amount,
                         }
                     }).to_string());
                 },
                 PromiseResult::Failed => env::panic(b"ERR_CALL_FAILED"),
             }
     }
+}
+
+//----------------------------------- TEST -------------------------------------------------
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use near_sdk::test_utils::{accounts, VMContextBuilder};
+    use near_sdk::MockedBlockchain;
+    use near_sdk::{testing_env, VMContext, Balance};
+
+    use super::*;
+    use std::convert::TryFrom;
+
+    pub const TOTAL_SUPPLY: Balance = 1_000 ;
+    pub const CONTRACT_ACCOUNT: &str = "contract.testnet";
+    pub const TOKEN_ACCOUNT: &str = "token.testnet";
+    pub const SIGNER_ACCOUNT: &str = "signer.testnet";
+    pub const OWNER_ACCOUNT: &str = "owner.testnet";
+
+  pub fn get_context(input: Vec<u8>, is_view: bool, attached_deposit: u128, account_balance: u128, signer_id: AccountId) -> VMContext {
+    VMContext {
+        current_account_id: CONTRACT_ACCOUNT.to_string(),
+        signer_account_id: signer_id.clone(),
+        signer_account_pk: vec![0, 1, 2],
+        predecessor_account_id: signer_id.clone(),
+        input,
+        block_index: 0,
+        block_timestamp: 0,
+        account_balance,
+        account_locked_balance: 0,
+        storage_usage: 0,
+        attached_deposit,
+        prepaid_gas: 10u64.pow(18),
+        random_seed: vec![0, 1, 2],
+        is_view,
+        output_data_receivers: vec![],
+        epoch_height: 19,
+    }
+  }
+
+
+  pub fn init_contract() -> Contract{
+    Contract {
+        owner_id: OWNER_ACCOUNT.to_string(),
+    }
+  }
+
+
+    #[test]
+    fn test_new() {
+        let mut context = get_context(vec!(), false, 0, 0, OWNER_ACCOUNT.to_string()); 
     
-    #[payable]
-    pub fn change_fee(&mut self, new_fee: U128) -> U128 {
-        assert!(env::predecessor_account_id() == self.owner_id, "Only owner can call this function");
-        assert_one_yocto();
-        self.transfer_fee = new_fee.0;
-        U128(self.transfer_fee)
+        testing_env!(context);
+
+        let contract = Contract::new(OWNER_ACCOUNT.to_string());
+        assert_eq!(contract.owner_id, OWNER_ACCOUNT.to_string())
     }
 
-    pub fn get_fee(&self) -> U128 {
-        U128(self.transfer_fee)
+    #[test]
+    #[should_panic(expected = "Should be initialized before usage")]
+    fn test_default() {
+        let mut context = get_context(vec!(), false, 0, 0, OWNER_ACCOUNT.to_string()); 
+        testing_env!(context);
+        let _contract = Contract::default();
     }
 
-    #[payable]
-    pub fn withdraw_funds(&mut self, quantity: U128) -> Promise {
-        assert!(env::predecessor_account_id() == self.owner_id, "Only owner can call this function");
-        assert_one_yocto();
-        Promise::new(self.owner_id.clone()).transfer(quantity.0)
-    }
+
 
 }
 
